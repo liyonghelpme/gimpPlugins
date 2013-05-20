@@ -82,11 +82,12 @@ def genJsonFile(l, back, curPic, pdb, strings):
 
 
 #NGUI 需要的 C# 代码
-def genCSharpCode(l, back, curPic, pdb, strings, depth):
+def genCSharpCode(l, back, curPic, pdb, strings, depth, inFlow=False):
     ret = ""
     callbacks = []
     for i in l:
         if i.visible:
+            isLabel = False
             if hasattr(i, 'layers'):
                 iName = i.name.replace('＃', '#')
                 attris = iName.split('#')
@@ -95,7 +96,7 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                     if a == 'item':
                         isPanel = True
                         break
-
+                
                 nl = i.layers
                 nl.reverse()
                 #不支持多层嵌套拖动view
@@ -112,8 +113,7 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                     ret += "\t\tdrag.scale = new Vector3(0, 1, 0);\n"
                     ret += "\t\toldObject = rootObject;\n"
                     ret += "\t\trootObject = panel2.gameObject;\n"
-
-                newRet, depth, newCallback = genCSharpCode(nl, back, curPic, pdb, strings, depth)
+                newRet, depth, newCallback = genCSharpCode(nl, back, curPic, pdb, strings, depth, isPanel)
                 ret += newRet
                 callbacks += newCallback
                 if isPanel:
@@ -122,6 +122,7 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                 iName = i.name.replace('＃', '#')
                 attris = iName.split('#')   
                 name = attris[0]
+                labelWord = name
                 if name[-1] == ' ':
                     name = name[:-1]
                 #使用数据库中的字符
@@ -142,7 +143,8 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                 my = 0
                 button = False
                 callback = None
-
+                labelSize = 28
+                color = [0, 0, 0]
 
                 for a in attris[1:]:
                     if a[-1] == ' ':
@@ -169,7 +171,17 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                         #callback = "On%s" % (name.capitalize())
                     if a[0] == 'c':
                         callback = a[1:]
-                        callbacks.append(callback)
+                        if callback not in callbacks:
+                            callbacks.append(callback)
+                    if a == 'l':
+                        isLabel = True
+                    if a[0] == 'z':
+                        labelSize = int(a[1:])
+                    if a[0] == 'r':
+                        r = int(a[1:3], 16)
+                        g = int(a[3:5], 16)
+                        b = int(a[5:7], 16)
+                        color = [r/255.0, g/255.0, b/255.0]
 
                 pi = my*10+mx
                 if pi == 0:
@@ -207,9 +219,22 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                 #unity3d 坐标是 左下角 0  0
                 #gimp 坐标是 左上角 0 0
                 py -= hei*my*50/100
+                if isLabel:
+                    ret += '\t\tlabel = NGUITools.AddChild<UILabel>(rootObject);\n'
+                    ret += '\t\tlabel.name = "%s";\n' % (labelWord)
+                    ret += '\t\tlabel.font = font;\n'
+                    ret += '\t\tlabel.text = "%s";\n' % (labelWord)
+                    ret += '\t\tlabel.color = Color.black;\n'
+                    ret += '\t\tlabel.MakePixelPerfect();\n'
+                    ret += '\t\tlabel.pivot = UIWidget.Pivot.%s;\n' % (pivot)
+                    ret += '\t\tlabel.transform.localPosition = new Vector3(%df, %df, 0f);\n' % (px, py)
+                    ret += '\t\tlabel.depth = %d;\n' % (depth)
+                    ret += '\t\tlabel.transform.localScale = new Vector3(%df, %df, 1f);\n' % (labelSize, labelSize)
+                    ret += '\t\tlabel.color = new Color(%d, %d, %d);\n' % (color[0], color[1], color[2])
+                    ret += '\n'
 
-                if button:
-                    ret += "\t\tgo = NGUITools.AddChild(panel.gameObject);\n"
+                elif button:
+                    ret += "\t\tgo = NGUITools.AddChild(rootObject);\n"
                     ret += "\t\tgo.name = \"Button(%s)\";\n" % (name)
                     ret += "\t\tgo.transform.localPosition = new Vector3(%df, %df, 0f);\n" % (px, py)
                     ret += "\n"
@@ -242,10 +267,13 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                         ret += "\t\tmessage.trigger = UIButtonMessage.Trigger.OnRelease;\n"
                         ret += "\t\tmessage.functionName = \"%s\";\n" % (callback)
 
+                    if inFlow:
+                        ret += "\t\tdragContents = go.AddComponent<UIDragPanelContents>();\n"
+                        ret += "\t\tdragContents.draggablePanel = drag;\n"
 
                     ret += "\n"
                 else:
-                    ret += "\t\tsprite = NGUITools.AddChild<UISprite>(panel.gameObject);\n"
+                    ret += "\t\tsprite = NGUITools.AddChild<UISprite>(rootObject);\n"
                     ret += "\t\tsprite.name = sprite.name + \"(\" + \"%s\" + \")\";\n" % (name)
                     ret += "\t\tsprite.atlas = atlas;\n"
                     ret += "\t\tsprite.spriteName = \"%s\";\n" % (name)
@@ -254,6 +282,12 @@ def genCSharpCode(l, back, curPic, pdb, strings, depth):
                     ret += "\t\tsprite.transform.localPosition = new Vector3(%d, %d, 0);\n" % (px, py)
                     ret += "\t\tsprite.transform.localScale = new Vector3(%d, %d, 0);\n" % (wid, hei)
                     ret += "\t\tsprite.depth = %d;\n" % (depth)
+                    if inFlow:
+                        ret += "\t\tbox = sprite.gameObject.AddComponent<BoxCollider>();\n"
+                        ret += '\t\tbox.center = new Vector3(0.5f, -0.5f, 0);\n'
+                        ret += '\t\tbox.size = new Vector3(1, 1, 0.1f);\n'
+                        ret += "\t\tdragContents = sprite.gameObject.AddComponent<UIDragPanelContents>();\n"
+                        ret += "\t\tdragContents.draggablePanel = drag;\n"
                     ret += "\n";
 
                 depth += 1
@@ -853,7 +887,10 @@ def genIOSCode(p, back):
 
    
 #生成unity3d NGUI 的代码
-def genNGUICode(p, back, name, atlas, pdb=None):
+def genNGUICode(p, back, name, atlas=None):
+    if atlas == None:
+        print "No atlas use name"
+        atlas = name
     con = MySQLdb.connect(host='localhost', user='root', passwd='badperson3', db='uiname', charset='utf8')
     sql = 'select cnName, engName from picname'
     con.query(sql)
@@ -874,15 +911,16 @@ def genNGUICode(p, back, name, atlas, pdb=None):
     ret += "\t\tUIDragPanelContents dragContents;\n"
     ret += "\t\tBoxCollider box;\n"
     ret += "\t\tUIPanel panel2;\n"
+    ret += "\t\tUILabel label;\n"
     ret += "\t\tGameObject oldObject;\n"
     ret += "\t\trootObject = panel.gameObject;\n"
 
-    newRet, depth, callbacks = genCSharpCode(l, b, curPic, pdb, {}, 0)
+    newRet, depth, callbacks = genCSharpCode(l, b, curPic, None, {}, 0)
     ret += newRet
 
     callbackCode = ""
     for i in callbacks:
-        callbackCode += "\tvoid %s() {\n" % (i)
+        callbackCode += "\tvoid %s(GameObject but) {\n" % (i)
         callbackCode += "\t}\n"
 
     f = open("G:\\gimpOutput\\template\\SpriteTemplate.cs")
@@ -1540,5 +1578,101 @@ def adjustMovePic(pdb, p):
     pdb.gimp_layer_set_offsets(p.layers[0], 11, 24)
 
 
+#将希望号身上的斑点做成新的plist文件粘贴sprite 到建筑物身上
+#用drawCall 来替换 纹理内存大小
+#如果保持有原始图层 则可以直接导出图层即可
+
+#可以新建图层提示切割哪些部分back图层 和hint 图层
+
+#切割原图获得小组成部分
+#将组成部分做成plist 图片
+#计算每个图片在原图中的位置
+#导出两份数据：
+#png plist + lua代码原始位置
+
+#模仿生成代码
+
+#得到图层位置 
+#切割图层该部分 到一张新的Image 中之后保存即可 名称就编号即可
+
+#首先清除之前的选择
+#gimp_image_select_polygon 建立新的多边形选择
+#有没有直接的box 选择
+
+#拷贝选择的图层位置
+
+#自动裁剪每个图层 到最小大小
+
+#生成plist拼接文件 python spritesheet 脚本
+#binPackage 脚本 修改如何使用 Rect leftChild rightChild
+
+"""
+    non_empty = pdb.gimp_edit_copy(l)
+    image = pdb.gimp_edit_paste_as_new()
+    n = l.name.split('#')[0]
+    if n[-1] == ' ':#去除名字末尾空格
+        n = n[:-1]
+    print 'saveNormal', n
+    newName = curPic.get(n, n)
+    pdb.file_png_save(image, image.layers[0], "G:\\gimpOutput\\"+newName+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
+    pdb.gimp_image_delete(image)
 
 
+"""
+#cut 是否自动切割每个cut 图层使其大小最小 第一次用的时候需要
+def cutPointAndGetPos(im, back, pdb, buildId, cut=True):
+    num = 0
+    b = findL(im.layers, back)
+    pos = []
+    for i in im.layers:
+        if i != b:
+            #print i.width, i.height
+            if cut:
+                pdb.gimp_image_set_active_layer(im, i)
+                pdb.plug_in_autocrop_layer(im, i)
+            #print i.width, i.height
+
+            wid = i.width
+            hei = i.height
+            x0 = i.offsets[0]
+            y0 = i.offsets[1]
+            x1 = x0+wid
+            y1 = y0
+            x2 = x1
+            y2 = y1+hei
+            x3 = x0
+            y3 = y2
+            
+            pos.append([x0, y0, x1, y1, x2, y2, x3, y3, wid, hei])
+
+            num += 1
+    
+    ret = ""
+    ret += "local buildId = %d\n" % (buildId)
+    ret += "local width = %d\n" % (im.width)
+    ret += "local height = %d\n" % (im.height)
+    ret += "local pic = {"
+    num = 0
+    for n in pos:
+        ret += '[%d]={%d, %d},\n' % (num, n[0], im.height-n[1]-n[9])
+        num += 1
+    ret += "}\n"
+    ret += 'return {buildId = buildId, width=width, height=height, pic=pic}\n'
+
+    f = open('G:\\hope\\out.lua', 'w')
+    f.write(ret)
+    f.close()
+
+    num = 0
+    for n in pos:
+        pdb.gimp_image_select_polygon(im, 2, 8, n)
+        nim = pdb.gimp_edit_copy(b)
+        image = pdb.gimp_edit_paste_as_new()
+        pdb.file_png_save(image, image.layers[0], "G:\\hope\\%d.png" % (num), "nn", 0, 9, 0, 0, 0, 0, 0)
+        pdb.gimp_image_delete(image)
+        num += 1
+
+
+            
+            
+        

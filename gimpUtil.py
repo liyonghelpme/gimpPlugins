@@ -875,44 +875,126 @@ def genFloatUICode(p, back, pdb):
         res += '\t'+l+'\n'
     print res
 
-def genLuaCode(p, back, pdb):
+def genLCode(p, pdb, im, back, curPic):
     l = list(p.layers)
     l.reverse()
+    px = 0
+    py = 0
+    if back != None and hasattr(back, 'offsets'):
+        px = back.offsets[0]
+        py = back.offsets[1]
+
+    for i in l:
+        if i.visible:
+            if hasattr(i, 'layers'):
+                genLCode(i, pdb, im, back, curPic)
+            else:
+                an = i.name.split('#')
+                name = an[0].replace(' ', '')
+                kind = 'sprite'
+                anchor = [0.5, 0.5]
+                wsize = 18
+                color = [255, 255, 255]
+                font = 'f1'
+                for k in an[1:]:
+                    if k == 'l':
+                        kind = 'label'
+                        anchor = [0, 0.5]
+                    elif k == 'p':
+                        kind = 'progress'
+                    elif k == 'b':
+                        kind = 'button'
+                    elif k == 'bottom':
+                        anchor[1] = 0
+                    elif k == 'left':
+                        anchor[0] = 0
+                    elif k == 'mid':
+                        anchor = [0.5, 0.5]
+                    elif k[0] == 'z':
+                        wsize = int(k[1:])
+                    elif k[0] == 'r':
+                        r = int(k[1:3], base=16)
+                        g = int(k[3:4], base=16)
+                        b = int(k[4:], base=16)
+                        color = [r, g, b]
+                    elif k[0] == 'f':
+                        font = k
+
+                textis = pdb.gimp_item_is_text_layer(i)
+                if textis == 1:
+                    kind = 'label'
+                    wsize, unit = pdb.gimp_text_layer_get_font_size(i)
+                    color = pdb.gimp_text_layer_get_color(i)
+                    color = [color.r, color.g, color.b]
+
+
+                if kind == 'sprite':
+                    mx, my = i.offsets[0], i.offsets[1]
+                    mx += i.width*anchor[0]
+                    my += i.height*(1-anchor[1])
+                    mx -= px
+                    my -= py
+                    print 'local sp = setAnchor(setSize(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%d, %d}), {%.2f, %.2f})' % (curPic.get(name, name), mx, my, i.width, i.height, anchor[0], anchor[1])
+                elif kind == 'label':
+                    mx, my = i.offsets[0], i.offsets[1]
+                    mx += i.width*anchor[0]
+                    my += i.height*(1-anchor[1])
+                    mx -= px
+                    my -= py
+                    #裁剪label
+                    pdb.plug_in_autocrop_layer(im, i)
+                    print 'local w = setPos(setAnchor(addChild(self.temp, ui.newTTFLabel({text="%s", size=%d, color={%d, %d, %d}, font="%s"})), {%.2f, %.2f}), {%d, fixY(sz.height, %d)})' % (name, wsize, color[0], color[1], color[2], font, anchor[0], anchor[1], mx, my)
+                elif kind == 'progress':
+                    print 'local banner = setSize(CCSprite:create("probg.png"), {%d, %d})' % (i.width, i.height)
+                    print 'local pro = display.newScale9Sprite("pro.png")'
+                    print 'banner:addChild(pro)'
+                    print 'setAnchor(setPos(pro, {27, fixY(76, 40)}), {0, 0.5})'
+                    print 'setPos(banner, {%d, fixY(sz.height, %d)})' % (i.offsets[0]-px+i.width/2, i.offsets[1]-py+i.height/2)
+                    print 'addChild(self.temp, banner)'
+                elif kind == 'button':
+                    print 'local but = ui.newButton({image="%s.png"})' % (name)
+                    print 'setPos(addChild(self.temp, but.bg), {%d, fixY(sz.height, %d)})' % (i.offsets[0]-px+i.width/2, i.offsets[1]-py+i.height/2)
+
+def genGroupCode(p, group, pdb):
+    l = findL(p.layers, group)
+    genLuaCode(p, l, pdb)
+
+
+def genLuaCode(p, back, pdb):
+    px = 0
+    py = 0
+    sz = [p.width, p.height]
+    if back == None:
+        back = p
+        #l = list(p.layers)
+    else:
+        px = back.offsets[0]
+        py = back.offsets[1]
+        sz = [back.width, back.height]
+        pass
+        #l = list(back.layers)
+    #l.reverse()
     print 'local vs = getVS()'
     print 'self.bg = CCNode:create()'
+    print 'local sz = {width=%d, height=%d}' % (sz[0], sz[1])
+    print 'self.temp = setPos(addNode(self.bg), {%d, fixY(vs.height, %d)})' % (px, py)
+    '''
     print 'local temp = display.newScale9Sprite("tabback.jpg")'
     print 'temp:setContentSize(CCSizeMake(%d, %d))' % (l[0].width, l[0].height)
     print 'setPos(temp, {vs.width/2, vs.height/2})'
+    print 'addChild(self.bg, temp)'
     print 'self.temp = temp'
-
     print 'local sz = self.temp:getContentSize()'
-    for i in l[1:]:
-        an = i.name.split('#')
-        name = an[0]
-        kind = 'sprite'
-        for k in an[1:]:
-            if k == 'l':
-                kind = 'label'
-            elif k == 'p':
-                kind = 'progress'
-        textis = pdb.gimp_item_is_text_layer(i)
-        if textis == 1:
-            kind = 'label'
-            wsize, unit = pdb.gimp_text_layer_get_font_size(i)
-            color = pdb.gimp_text_layer_get_color(i)
+    '''
 
+    con = MySQLdb.connect(host='192.168.3.120', user='root', passwd='badperson3', db='miamiao', charset='utf8')
+    sql = 'select cnName, engName from picName'
+    con.query(sql)
+    res = con.store_result().fetch_row(0, 1)#rowNum Dict
+    curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
+    con.close()
 
-        if kind == 'sprite':
-            print 'local sp = setPos(addSprite(self.temp, "%s"), {%d, fixY(sz.height, %d)})' % (name, i.offsets[0]+i.width/2, i.offsets[1]+i.height/2)
-        elif kind == 'label':
-            print 'local w = setPos(setAnchor(addChild(self.temp, ui.newTTFLabel({text="%s", size=%d, color={%d, %d, %d}})), {0.5, 0.5}), {%d, fixY(sz.height, %d)})' % (name, wsize, color.r, color.g, color.b, i.offsets[0], i.offsets[1])
-        elif kind == 'progress':
-            print 'local banner = setSize(CCSprite:create("probg.png"), {%d, %d})' % (i.width, i.height)
-            print 'local pro = display.newScale9Sprite("pro.png")'
-            print 'banner:addChild(pro)'
-            print 'setAnchor(setPos(pro, {27, fixY(76, 40)}), {0, 0.5})'
-            print 'setPos(banner, {%d, fixY(sz.height, %d)})' % (i.offsets[0]+i.width/2, i.offsets[1]+i.height/2)
-            print 'addChild(self.temp, banner)'
+    genLCode(back, pdb, p, back, curPic)
 
 
    
@@ -1058,7 +1140,7 @@ def saveSamePosAndSizeWithImage(pdb, l):
         n = n[:-1]
     print 'saveAni', n, oldIm.width, oldIm.height, layer.width, layer.height
     
-    pdb.gimp_file_save(image, layer, os.environ['HOME']+"/temp/animation/"+n+".png", "")
+    pdb.gimp_file_save(image, layer, "G:\\gimpOutput\\"+n+".png", "")
     #pdb.file_png_save(image, image.layers[0], os.environ['HOME']+"/temp/animation/"+n+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
     pdb.gimp_image_delete(image)
 
@@ -1278,7 +1360,7 @@ def exportBuild(pdb, im, pid):
                 
 
 #中文图片存储到temp
-def saveLayer(pdb, l, curPic):
+def saveLayer(pdb, l, curPic, con=None):
     non_empty = pdb.gimp_edit_copy(l)
     image = pdb.gimp_edit_paste_as_new()
     n = l.name.split('#')[0]
@@ -1288,6 +1370,9 @@ def saveLayer(pdb, l, curPic):
     newName = curPic.get(n, n)
     pdb.file_png_save(image, image.layers[0], "G:\\gimpOutput\\"+newName+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
     pdb.gimp_image_delete(image)
+    if con != None:
+        sql = 'insert ignore into picName (cnName) values( "%s")' % (newName)
+        con.query(sql)
 #不切割图片
 def checkAniSave(pdb, im):
     ret = [] 
@@ -1448,23 +1533,23 @@ def checkAllFont(pdb, im):
 #存储所有可见图层
 #使用英文名称 转化图片名称
 #NGUI 使用
-def checkAllSave(pdb, im):
-    """
-    con = MySQLdb.connect(host='localhost', user='root', passwd='badperson3', db='uiname', charset='utf8')
-    sql = 'select cnName, engName from picname'
-    con.query(sql)
-    res = con.store_result().fetch_row(0, 1)#rowNum Dict
 
-    curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
-    con.close()
-    """
+def checkAllSave(pdb, im, maxSz=[0, 0]):
+    con = MySQLdb.connect(host='192.168.3.120', user='root', passwd='badperson3', db='miamiao', charset='utf8')
+    #sql = 'select cnName, engName from picname'
+    #con.query(sql)
+    #res = con.store_result().fetch_row(0, 1)#rowNum Dict
+
+    #curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
+    #con.close()
     curPic = {}
 
     ret = [] 
     for i in im.layers:
         if i.visible:
             if hasattr(i, 'layers'):
-                ret += checkAllSave(pdb, i)
+                ret += checkAllSave(pdb, i, maxSz)
+
             else:
                 iName = i.name.replace('＃', '#')
                 attris = iName.split('#')   
@@ -1472,8 +1557,16 @@ def checkAllSave(pdb, im):
                 if name[-1] == ' ':
                     name = name[:-1]
 
-                saveLayer(pdb, i, curPic)
+                saveLayer(pdb, i, curPic, con)
                 ret.append(i.name)
+                if i.width > maxSz[0]:
+                    maxSz[0] = i.width
+                if i.height > maxSz[1]:
+                    maxSz[1] = i.height
+    print "max", maxSz
+
+    con.commit()
+    con.close()
     return ret
             
 #存储#n属性的图层

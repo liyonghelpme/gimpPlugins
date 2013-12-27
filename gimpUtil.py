@@ -1115,7 +1115,7 @@ def genLuaCode(p, back, pdb, ret={}):
     genLCode(back, pdb, p, back, curPic, ret)
     strValue = mystd.getvalue()
     if ret.get('center', None) != None:
-        strValue = strValue.replace('[OLD_X]', str(ret['center']-p.width/2))
+        strValue = strValue.replace('[OLD_X]', str(-ret['center']+p.width/2))
     else:
         strValue = strValue.replace('[OLD_X]', str(oldX))
     if ret.get('heiCenter', None) != None:
@@ -1126,6 +1126,14 @@ def genLuaCode(p, back, pdb, ret={}):
     if ret.get('panel', False):
         import re
         pat = re.compile('panel = .*\n')
+        
+        '''
+        np = re.compile('local sp = .*list.*\n')
+        repList = np.findall(strValue)
+        nstr = repList[0].replace('sp', 'listback')
+        strValue = strValue.replace(repList[0], nstr)
+        '''
+
         strValue = strValue.replace('self.temp', 'panel')
         needReplace = pat.findall(strValue)
         strValue = strValue.replace(needReplace[0], 'local panel = setPos(addNode(self.flowNode), {initX+col*offX, initY-offY*row})\n')

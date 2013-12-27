@@ -1,9 +1,12 @@
 #coding:utf8
+from cStringIO import StringIO
+import sys
 """
 checkAllSave 保存所有的图片到 G:\\gimpOutput 文件夹里面
 genFloatUICode 生成cocos2dx所有的UI代码
 checkAllFont 生成所有字体编码图片
 
+genGroupCode
 genLuaCode 生成lua 的ui代码
 """
 import os
@@ -29,7 +32,8 @@ def gimpToUnity(x, y):
 
 def findL(p, n):
     for i in p:
-        if i.name == n:
+        allN = i.name.split('#')
+        if i.name == n or allN[0] == n:
             return i
         #group
         if hasattr(i, 'layers'):
@@ -875,7 +879,7 @@ def genFloatUICode(p, back, pdb):
         res += '\t'+l+'\n'
     print res
 
-def genLCode(p, pdb, im, back, curPic):
+def genLCode(p, pdb, im, back, curPic, ret):
     l = list(p.layers)
     l.reverse()
     px = 0
@@ -887,7 +891,7 @@ def genLCode(p, pdb, im, back, curPic):
     for i in l:
         if i.visible:
             if hasattr(i, 'layers'):
-                genLCode(i, pdb, im, back, curPic)
+                genLCode(i, pdb, im, back, curPic, ret)
             else:
                 an = i.name.split('#')
                 name = an[0].replace(' ', '')
@@ -896,6 +900,10 @@ def genLCode(p, pdb, im, back, curPic):
                 wsize = 18
                 color = [255, 255, 255]
                 font = 'f1'
+                word = ''
+                center = False
+                nosize = False
+                heiCenter = False
                 for k in an[1:]:
                     if k == 'l':
                         kind = 'label'
@@ -912,13 +920,26 @@ def genLCode(p, pdb, im, back, curPic):
                         anchor = [0.5, 0.5]
                     elif k[0] == 'z':
                         wsize = int(k[1:])
-                    elif k[0] == 'r':
+                    elif k == 'right':
+                        anchor[0] = 1
+                    elif k[0] == 'r' and k.find('right') == -1:
                         r = int(k[1:3], base=16)
-                        g = int(k[3:4], base=16)
-                        b = int(k[4:], base=16)
+                        g = int(k[3:5], base=16)
+                        b = int(k[5:7], base=16)
                         color = [r, g, b]
+                        #print 'color', k, r, g, b
                     elif k[0] == 'f':
                         font = k
+                    elif k[0] == 'w':
+                        word = k[1:]
+                    elif k == 'center':
+                        center = True
+                    elif k == 'top':
+                        anchor[1] = 1
+                    elif k == 'nosize':
+                        nosize = True
+                    elif k == 'heiCenter':
+                        heiCenter = True
 
                 textis = pdb.gimp_item_is_text_layer(i)
                 if textis == 1:
@@ -929,20 +950,41 @@ def genLCode(p, pdb, im, back, curPic):
 
 
                 if kind == 'sprite':
+                    if ret.get('isList', False):
+                        anchor[0] = 0
+                        anchor[1] = 0
                     mx, my = i.offsets[0], i.offsets[1]
                     mx += i.width*anchor[0]
                     my += i.height*(1-anchor[1])
-                    mx -= px
-                    my -= py
-                    print 'local sp = setAnchor(setSize(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%d, %d}), {%.2f, %.2f})' % (curPic.get(name, name), mx, my, i.width, i.height, anchor[0], anchor[1])
+
+                    if not ret.get('scroll', False):
+                        mx -= px
+                        my -= py
+                        
+                    if ret.get('isList', False) or ret.get('scroll', False):
+                        ret['panels'].append([mx, my, curPic.get(name, name), anchor[0], anchor[1], i.width, i.height])
+
+                    if nosize:
+                        print 'local sp = setAnchor(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%.2f, %.2f})' % (curPic.get(name, name), mx, my, anchor[0], anchor[1])
+                    else:
+                        print 'local sp = setAnchor(setSize(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%d, %d}), {%.2f, %.2f})' % (curPic.get(name, name), mx, my, i.width, i.height, anchor[0], anchor[1])
+                    if heiCenter:
+                        ret['heiCenter'] = my
                 elif kind == 'label':
+                    if center:
+                        anchor[0] = 0.5
                     mx, my = i.offsets[0], i.offsets[1]
                     mx += i.width*anchor[0]
                     my += i.height*(1-anchor[1])
                     mx -= px
                     my -= py
+                    if center:
+                        #mx = im.width/2
+                        anchor[0] = 0.5
+                        ret['center'] = mx
                     #裁剪label
-                    pdb.plug_in_autocrop_layer(im, i)
+                    #不能裁剪文字
+                    #pdb.plug_in_autocrop_layer(im, i)
                     print 'local w = setPos(setAnchor(addChild(self.temp, ui.newTTFLabel({text="%s", size=%d, color={%d, %d, %d}, font="%s"})), {%.2f, %.2f}), {%d, fixY(sz.height, %d)})' % (name, wsize, color[0], color[1], color[2], font, anchor[0], anchor[1], mx, my)
                 elif kind == 'progress':
                     print 'local banner = setSize(CCSprite:create("probg.png"), {%d, %d})' % (i.width, i.height)
@@ -952,15 +994,88 @@ def genLCode(p, pdb, im, back, curPic):
                     print 'setPos(banner, {%d, fixY(sz.height, %d)})' % (i.offsets[0]-px+i.width/2, i.offsets[1]-py+i.height/2)
                     print 'addChild(self.temp, banner)'
                 elif kind == 'button':
-                    print 'local but = ui.newButton({image="%s.png"})' % (name)
+                    print 'local but = ui.newButton({image="%s.png", text="%s", font="%s", size=%d, delegate=self, callback=self.onBut})' % (curPic.get(name, name), word, font, wsize)
+                    print 'but:setContentSize(%d, %d)' % (i.width, i.height)
                     print 'setPos(addChild(self.temp, but.bg), {%d, fixY(sz.height, %d)})' % (i.offsets[0]-px+i.width/2, i.offsets[1]-py+i.height/2)
 
 def genGroupCode(p, group, pdb):
     l = findL(p.layers, group)
-    genLuaCode(p, l, pdb)
+    ret = {}
+    allAtt = l.name.split('#')
+    #scroll 滚动条
+    #isList 列表项
+    for k in allAtt[1:]:
+        if k == 'list':
+            ret['isList'] = True
+        elif k == 'scroll':
+            ret['scroll'] = True
+        elif k == 'panel':
+            ret['panel'] = True
+    ret['panels'] = []
+
+    genLuaCode(p, l, pdb, ret)
+
+    if ret.get('scroll', False):
+        zero = back = ret['panels'][0]
+        print 'local sp = setAnchor(setSize(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%d, %d}), {%.2f, %.2f})' % (back[2], back[0], back[1], back[5], back[6], back[3], back[4])
+        back = ret['panels'][1]
+        print 'local pro = setAnchor(setSize(setPos(addSprite(sp, "%s.png"), {0, fixY(%d, 0)}), {%d, %d}), {0, 1})' % (back[2], 315, back[5], back[6])
+        print 'self.scrollPro = pro'
+        print 'local total = #self.data'
+        print 'local sz = getContentSize(self.scrollPro)'
+        print 'self.scrollHeight = math.max(math.min(6/total*%d, %d), 10)' % (315, 315)
+        print 'self.scrollBackHei = %d' % (315)
+        print 'sy = self.scrollHeight/(sz[2]-4)'
+        print 'setScaleY(self.scrollPro, sy)'
 
 
-def genLuaCode(p, back, pdb):
+
+    if ret.get('isList', False):
+        print ''
+        print 'local listSize = {width=%d, height=%d}' % (l.width, l.height)
+        print 'self.HEIGHT = %d'%(l.height)
+        print 'self.cl = Scissor:create()'
+        print 'self.temp:addChild(self.cl)'
+        print 'setPos(self.cl, {%d, fixY(sz.height, %d+listSize.height)})' % (l.offsets[0], l.offsets[1])
+        print 'setContentSize(self.cl, {listSize.width, listSize.height})'
+        print 'self.flowNode = addNode(self.cl)'
+        print 'setPos(self.flowNode, {0, self.HEIGHT})'
+
+        print 'self.touch = ui.newTouchLayer({size={listSize.width, self.HEIGHT}, delegate=self, touchBegan=self.touchBegan, touchMoved=self.touchMoved, touchEnded=self.touchEnded})'
+        print 'self.cl:addChild(self.touch.bg)'
+        print 'setPos(self.touch.bg, {0, 0})'
+
+        print 'self.flowHeight = 0'
+        print 'self:updateTab()'
+
+        print ''
+        print 'function updateTab()'
+        ret['panels'].reverse()
+        pan = ret['panels']
+        print '\tlocal initX = %d' % (pan[0][0])
+        print '\tlocal initY = %d' % (-pan[0][1])
+        print '\tlocal offX = 0'
+        print '\tlocal offY = %d' % (pan[1][1]-pan[0][1])
+        print '\tself.data = {}'
+        print '\tlocal sz = {width=%d, height=%d}' % (l.width, pan[0][1])
+        print '\tlocal test = {1, 1, 1, 1, 1, 1, 1}'
+        print '\tlocal rowWidth = 1'
+        print '\tfor k, v in ipairs(test) do'
+        print '\t\tlocal row = math.floor((k-1)/rowWidth)'
+        print '\t\tlocal col = (k-1)%rowWidth'
+        print '\t\tlocal sp = CCSprite:create("%s.png")' % (pan[0][2])
+        print '\t\tself.flowNode:addChild(sp)'
+        print '\t\tsetAnchor(setPos(sp, {initX+col*offX, initY-offY*row}), {0, 0})'
+        print '\t\tsp:setTag(k)'
+        print '\t\ttable.insert(self.data, {sp, build})'
+        print '\t\tself.flowHeight = self.flowHeight+offY'
+        print '\tend'
+
+        print 'end'
+
+
+
+def genLuaCode(p, back, pdb, ret={}):
     px = 0
     py = 0
     sz = [p.width, p.height]
@@ -973,11 +1088,14 @@ def genLuaCode(p, back, pdb):
         sz = [back.width, back.height]
         pass
         #l = list(back.layers)
+    old_std = sys.stdout
+    sys.stdout = mystd = StringIO()
     #l.reverse()
     print 'local vs = getVS()'
     print 'self.bg = CCNode:create()'
     print 'local sz = {width=%d, height=%d}' % (sz[0], sz[1])
-    print 'self.temp = setPos(addNode(self.bg), {%d, fixY(vs.height, %d)})' % (px, py)
+    oldX = px
+    print 'self.temp = setPos(addNode(self.bg), {[OLD_X], fixY(vs.height, %d+sz.height)+[HEI_Y]})' % (py)
     '''
     print 'local temp = display.newScale9Sprite("tabback.jpg")'
     print 'temp:setContentSize(CCSizeMake(%d, %d))' % (l[0].width, l[0].height)
@@ -994,8 +1112,27 @@ def genLuaCode(p, back, pdb):
     curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
     con.close()
 
-    genLCode(back, pdb, p, back, curPic)
-
+    genLCode(back, pdb, p, back, curPic, ret)
+    strValue = mystd.getvalue()
+    if ret.get('center', None) != None:
+        strValue = strValue.replace('[OLD_X]', str(ret['center']-p.width/2))
+    else:
+        strValue = strValue.replace('[OLD_X]', str(oldX))
+    if ret.get('heiCenter', None) != None:
+        strValue = strValue.replace('[HEI_Y]', str(ret['heiCenter']-p.height/2))
+    else:
+        strValue = strValue.replace('[HEI_Y]', str(0))
+        
+    if ret.get('panel', False):
+        import re
+        pat = re.compile('panel = .*\n')
+        strValue = strValue.replace('self.temp', 'panel')
+        needReplace = pat.findall(strValue)
+        strValue = strValue.replace(needReplace[0], 'local panel = setPos(addNode(self.flowNode), {initX+col*offX, initY-offY*row})\n')
+        strValue += 'panel:setTag(k)\n'
+        strValue += 'setContentSize(panel, {sz.width, sz.height})\n'
+    sys.stdout = old_std
+    print strValue
 
    
 #生成unity3d NGUI 的代码

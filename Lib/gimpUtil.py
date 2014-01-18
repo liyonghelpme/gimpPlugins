@@ -1,10 +1,29 @@
 #coding:utf8
+from cStringIO import StringIO
+import sys
+"""
+checkAllSave 保存所有的图片到 G:\\gimpOutput 文件夹里面
+genFloatUICode 生成cocos2dx所有的UI代码
+checkAllFont 生成所有字体编码图片
+
+genGroupCode
+genLuaCode 生成lua 的ui代码
+"""
 import os
 import MySQLdb
 import json
 outGimp = None
 screenWidth = 960
 screenHeight = 640
+#将alpha值小于一定值的部分的颜色 从 000 转化成 255 255 255
+def convertAlphaToWhite(pdb, l, sx, sy, w, h):
+    for i in xrange(0, w):
+        for j in xrange(0, h):
+            n, c = pdb.gimp_drawable_get_pixel(l, i+sx, j+sy)
+            if c[3] < 255 and c[3] > 0:
+                nc = [0, 0, 255, 255]
+                pdb.gimp_drawable_set_pixel(l, i+sx, j+sy, 4, nc)
+
 #NGUI
 def gimpToUnity(x, y):
     x -= screenWidth/2
@@ -13,7 +32,8 @@ def gimpToUnity(x, y):
 
 def findL(p, n):
     for i in p:
-        if i.name == n:
+        allN = i.name.split('#')
+        if i.name == n or allN[0] == n:
             return i
         #group
         if hasattr(i, 'layers'):
@@ -64,236 +84,6 @@ def genLayerPosAndScale(p, back, pdb=None):
     print '};'
     print 'int len = ', len(res)*3,';'
     return res
-
-#gimpOutput 文件夹中生成代码
-def genJsonFile(l, back, curPic, pdb, strings):
-    for i in l:
-        if i.visible:
-            if hasattr(i, 'layers'):
-                nl = i.layers
-                l.reverse()
-                genJsonFile(l, back, curPic, pdb, strings)
-            else:
-                px = i.offsets[0] - back.offsets[0]
-                py = i.offsets[1] - back.offsets[1]
-
-                px -= 512
-                py = 768-py+-384
-
-
-#NGUI 需要的 C# 代码
-def genCSharpCode(l, back, curPic, pdb, strings, depth, inFlow=False):
-    ret = ""
-    callbacks = []
-    for i in l:
-        if i.visible:
-            isLabel = False
-            if hasattr(i, 'layers'):
-                iName = i.name.replace('＃', '#')
-                attris = iName.split('#')
-                isPanel = False
-                for a in attris[1:]:
-                    if a == 'item':
-                        isPanel = True
-                        break
-                
-                nl = i.layers
-                nl.reverse()
-                #不支持多层嵌套拖动view
-                if isPanel:
-                    ret += "\t\tpanel2 = NGUITools.AddChild<UIPanel>(anchor.gameObject);\n"
-                    ret += "\t\tdrag = panel2.gameObject.AddComponent<UIDraggablePanel>();\n"
-                    ret += "\t\tpanel2.clipping = UIDrawCall.Clipping.SoftClip;\n"
-                    pwid = i.width
-                    phei = i.height
-                    x, y = i.offsets
-                    x, y = gimpToUnity(x, y)
-                    ret += "\t\tpanel2.clipRange = new Vector4(%d, %d, %d, %d);\n" % (x+pwid/2, y-phei/2, pwid, phei)
-                    ret += "\t\tpanel2.clipSoftness = new Vector2(10, 10);\n"
-                    ret += "\t\tdrag.scale = new Vector3(0, 1, 0);\n"
-                    ret += "\t\toldObject = rootObject;\n"
-                    ret += "\t\trootObject = panel2.gameObject;\n"
-                newRet, depth, newCallback = genCSharpCode(nl, back, curPic, pdb, strings, depth, isPanel)
-                ret += newRet
-                callbacks += newCallback
-                if isPanel:
-                    ret += "\t\trootObject = oldObject;\n"
-            else:
-                iName = i.name.replace('＃', '#')
-                attris = iName.split('#')   
-                name = attris[0]
-                labelWord = name
-                if name[-1] == ' ':
-                    name = name[:-1]
-                #使用数据库中的字符
-                name = curPic.get(name, name)
-                """
-                TopLeft,
-                Top,
-                TopRight,
-                Left,
-                Center,
-                Right,
-                BottomLeft,
-                Bottom,
-                BottomRight,
-                """
-                pivot = "TopLeft"
-                mx = 0
-                my = 0
-                button = False
-                callback = None
-                labelSize = 28
-                color = [0, 0, 0]
-
-                for a in attris[1:]:
-                    if a[-1] == ' ':
-                        a = a[:-1]
-                    if a == 'left':
-                        mx = 0
-                    if a == 'top':
-                        my = 0
-                    if a == 'mx':
-                        mx = 1
-                    if a == 'my':
-                        my = 1
-                    if a == 'mid':
-                        mx = 1
-                        my = 1
-                    if a == 'right':
-                        mx = 2
-                    if a == 'bottom':
-                        my = 2
-                    if a == 'b':
-                        button = True
-                        mx = 1
-                        my = 1
-                        #callback = "On%s" % (name.capitalize())
-                    if a[0] == 'c':
-                        callback = a[1:]
-                        if callback not in callbacks:
-                            callbacks.append(callback)
-                    if a == 'l':
-                        isLabel = True
-                    if a[0] == 'z':
-                        labelSize = int(a[1:])
-                    if a[0] == 'r':
-                        r = int(a[1:3], 16)
-                        g = int(a[3:5], 16)
-                        b = int(a[5:7], 16)
-                        color = [r/255.0, g/255.0, b/255.0]
-
-                pi = my*10+mx
-                if pi == 0:
-                    pivot = "TopLeft"
-                elif pi == 1:
-                    pivot = "Top"
-                elif pi == 2:
-                    pivot = "Right"
-                elif pi == 10:
-                    pivot = "Left"
-                elif pi == 11:
-                    pivot = "Center"
-                elif pi == 12:
-                    pivot = "Right"
-                elif pi == 20:
-                    pivot = "BottomLeft"
-                elif pi == 21:
-                    pivot = "Bottom"
-                elif pi == 22:
-                    pivot = "BottomRight"
-
-                wid = i.width
-                hei = i.height
-
-                #print "error", i.name, back.name
-                px = i.offsets[0] - back.offsets[0]
-                py = i.offsets[1] - back.offsets[1]
-
-
-                px -= screenWidth/2
-                py = screenHeight-py+-screenHeight/2
-                
-
-                px += wid*mx*50/100
-                #unity3d 坐标是 左下角 0  0
-                #gimp 坐标是 左上角 0 0
-                py -= hei*my*50/100
-                if isLabel:
-                    ret += '\t\tlabel = NGUITools.AddChild<UILabel>(rootObject);\n'
-                    ret += '\t\tlabel.name = "%s";\n' % (labelWord)
-                    ret += '\t\tlabel.font = font;\n'
-                    ret += '\t\tlabel.text = "%s";\n' % (labelWord)
-                    ret += '\t\tlabel.color = Color.black;\n'
-                    ret += '\t\tlabel.MakePixelPerfect();\n'
-                    ret += '\t\tlabel.pivot = UIWidget.Pivot.%s;\n' % (pivot)
-                    ret += '\t\tlabel.transform.localPosition = new Vector3(%df, %df, 0f);\n' % (px, py)
-                    ret += '\t\tlabel.depth = %d;\n' % (depth)
-                    ret += '\t\tlabel.transform.localScale = new Vector3(%df, %df, 1f);\n' % (labelSize, labelSize)
-                    ret += '\t\tlabel.color = new Color(%d, %d, %d);\n' % (color[0], color[1], color[2])
-                    ret += '\n'
-
-                elif button:
-                    ret += "\t\tgo = NGUITools.AddChild(rootObject);\n"
-                    ret += "\t\tgo.name = \"Button(%s)\";\n" % (name)
-                    ret += "\t\tgo.transform.localPosition = new Vector3(%df, %df, 0f);\n" % (px, py)
-                    ret += "\n"
-                    ret += "\t\tbg = NGUITools.AddChild<UISlicedSprite>(go);\n"
-                    ret += "\t\tbg.name = \"Background\";\n"
-                    ret += "\t\tbg.depth = %d;\n" % (depth)
-                    ret += "\t\tbg.atlas = atlas;\n"
-                    ret += "\t\tbg.spriteName = \"%s\";\n" % (name)
-                    ret += "\t\tbg.transform.localScale = new Vector3(%df, %df, 1f);\n" % (wid, hei)
-
-                    ret += "\t\tbg.MakePixelPerfect();\n"
-                    ret += "\n"
-                    #字体之后做
-                    """
-                    ret += "UILabel lbl = NGUITools.AddWidget<UILabel>(go);\n"
-                    ret += "lbl.font = font;\n"
-                    ret += "lbl.text = go.name;\n"
-                    ret += "lbl.MakePixelPerfect();\n"
-                    """
-                    ret += "\n"
-                    ret += "\t\tNGUITools.AddWidgetCollider(go);\n"
-                    ret += "\n"
-                    ret += "\t\tgo.AddComponent<UIButton>().tweenTarget = bg.gameObject;\n"
-                    ret += "\t\tgo.AddComponent<UIButtonScale>();\n"
-                    ret += "\t\tgo.AddComponent<UIButtonOffset>();\n"
-                    ret += "\t\tgo.AddComponent<UIButtonSound>();\n"
-                    if callback != None:
-                        ret += "\t\tmessage = go.AddComponent<UIButtonMessage>();\n"
-                        ret += "\t\tmessage.target = gameObject;\n"
-                        ret += "\t\tmessage.trigger = UIButtonMessage.Trigger.OnRelease;\n"
-                        ret += "\t\tmessage.functionName = \"%s\";\n" % (callback)
-
-                    if inFlow:
-                        ret += "\t\tdragContents = go.AddComponent<UIDragPanelContents>();\n"
-                        ret += "\t\tdragContents.draggablePanel = drag;\n"
-
-                    ret += "\n"
-                else:
-                    ret += "\t\tsprite = NGUITools.AddChild<UISprite>(rootObject);\n"
-                    ret += "\t\tsprite.name = sprite.name + \"(\" + \"%s\" + \")\";\n" % (name)
-                    ret += "\t\tsprite.atlas = atlas;\n"
-                    ret += "\t\tsprite.spriteName = \"%s\";\n" % (name)
-                    ret += "\t\tsprite.pivot = UIWidget.Pivot.%s;\n" % (pivot)
-                    ret += "\t\tsprite.MakePixelPerfect();\n"
-                    ret += "\t\tsprite.transform.localPosition = new Vector3(%d, %d, 0);\n" % (px, py)
-                    ret += "\t\tsprite.transform.localScale = new Vector3(%d, %d, 0);\n" % (wid, hei)
-                    ret += "\t\tsprite.depth = %d;\n" % (depth)
-                    if inFlow:
-                        ret += "\t\tbox = sprite.gameObject.AddComponent<BoxCollider>();\n"
-                        ret += '\t\tbox.center = new Vector3(0.5f, -0.5f, 0);\n'
-                        ret += '\t\tbox.size = new Vector3(1, 1, 0.1f);\n'
-                        ret += "\t\tdragContents = sprite.gameObject.AddComponent<UIDragPanelContents>();\n"
-                        ret += "\t\tdragContents.draggablePanel = drag;\n"
-                    ret += "\n";
-
-                depth += 1
-    return ret, depth, callbacks
-
-            
 
 #根据图层组结构生成代码
 #相对的基础层 其他层
@@ -589,8 +379,8 @@ def genLayerCode(l, back, curPic, pdb, strings):
 #生成IOS 的 位置代码 都是相对于背景 的 960 * 640 的代码
 #组件相对于对话框
 def genIOSLayerCode(l, back, curPic, pdb, strings):
-    SCREEN_WIDTH = 960
-    SCREEN_HEIGHT = 640 
+    SCREEN_WIDTH = 1024
+    SCREEN_HEIGHT = 768 
     for i in l:
         #可见性决定是否生成代码
         if i.visible:
@@ -720,7 +510,7 @@ def genIOSLayerCode(l, back, curPic, pdb, strings):
                 hei = i.height
 
                 px = i.offsets[0] - back.offsets[0]
-                py = i.offsets[1] - back.offsets[1]
+                py = -(i.offsets[1] - (back.offsets[1]-back.height))
                 INIT_X = px
                 INIT_Y = py
                 #字体默认 竖直居中
@@ -857,33 +647,538 @@ def genIOSLayerCode(l, back, curPic, pdb, strings):
 
 #生成IOS 960 * 640 尺寸的 lua代码
 def genIOSCode(p, back):
-    con = MySQLdb.connect(host='localhost', user='root', passwd='badperson3', db='Wan2', charset='utf8')
-    sql = 'select chinese, english from allpictures'
-    con.query(sql)
-    res = con.store_result().fetch_row(0, 1)#rowNum Dict
-    curPic = dict([[i['chinese'].encode('utf8'), i['english'].encode('utf8')] for i in res])
+    #con = MySQLdb.connect(host='localhost', user='root', passwd='badperson3', db='Wan2', charset='utf8')
+    #sql = 'select chinese, english from allpictures'
+    #con.query(sql)
+    #res = con.store_result().fetch_row(0, 1)#rowNum Dict
+    #curPic = dict([[i['chinese'].encode('utf8'), i['english'].encode('utf8')] for i in res])
+    curPic = {}
     
 
-    sql = "select * from Strings"
-    con.query(sql)
-    res = con.store_result().fetch_row(0, 1)#rowNum Dict
+    #sql = "select * from Strings"
+    #con.query(sql)
+    #res = con.store_result().fetch_row(0, 1)#rowNum Dict
     strings = {}
-    for i in res:
-        strings[i['chinese'].encode('utf8')] = i['key']
-
+    #for i in res:
+    #    strings[i['chinese'].encode('utf8')] = i['key']
 
     b = findL(p.layers, back)
     l = list(p.layers)
     l.reverse()
-    print 'self.bg = CCNode:create()'
-    print 'self:init();'
+    print 'self.bg = CCLayer:create()'
     print 'local but0'
     print 'local line'
     print 'local temp'
     print 'local sca'
     genIOSLayerCode(l, b, curPic, None, strings)
+    #con.close()
+
+def genFloatLayerCode(l, back, allMenu, w, h, params):
+    SCREEN_WIDTH = w
+    SCREEN_HEIGHT = h
+    for i in l:
+        if i.visible:
+            if hasattr(i, 'layers'):
+                l = i.layers
+                l.reverse()
+                
+                iName = i.name.replace('＃', '#')
+                attris = iName.split('#')   
+                name = attris[0]
+                myParam = params.copy()
+                for a in attris[1:]:
+                    if a == 'midX':
+                        myParam['floatX'] = 'midX'
+                    elif a == 'midY':
+                        myParam['floatY'] = 'midY'
+                    elif a == 'e':
+                        myParam['export'] = True
+                genFloatLayerCode(l, back, allMenu, w, h, myParam)
+            else:
+                iName = i.name.replace('＃', '#')
+                attris = iName.split('#')   
+                name = attris[0]
+                if name[-1] == ' ':
+                    name = name[:-1]
+
+                #图片默认anchorPoint
+                ax = 0.5
+                ay = 0.5
+                floatX = params.get('floatX', 'left')
+                floatY = params.get('floatY', 'bottom')
+                #print i
+                px = i.offsets[0] - back.offsets[0]
+                py = -(i.offsets[1]+i.height - (back.offsets[1]+back.height))
+                wid = i.width
+                hei = i.height
+                kind = 'Sprite'
+                labelHeight = 18
+                export = params.get('export', False)
+                limitWidth = False
+                color = [255, 255, 255]
+                word = ""
+                showContentSize = False
+
+                for a in attris[1:]:
+                    if a == 'up':
+                        floatY = 'up'
+                    elif a == 'right':
+                        floatX = 'right'
+                    elif a == 'midX':
+                        floatX = 'midX'
+                    elif a == 'midY':
+                        floatY = 'midY'
+                    elif a == 'l':
+                        kind = 'Label'
+                        ax = 0
+                        ay = 0
+                    elif a[0] == 'z':
+                        labelHeight = int(a[1:])
+                    elif a[0] == 'e':
+                        export = True
+                    elif a == 'b':
+                        kind = 'Button'
+                    elif a == 'width':
+                        limitWidth = True
+                    elif a == 'input':
+                        kind = 'Input'
+                    elif a[:5] == 'color':
+                        col = a[5:]
+                        r = int(col[:2], 16)
+                        g = int(col[2:4], 16)
+                        b = int(col[4:6], 16)
+                        color = [r, g, b]
+                    elif a[0] == 'w':
+                        word = a[1:]
+                    elif a == 'anchorLeft':
+                        ax = 0
+                    elif a == 'anchorBottom':
+                        ay = 0
+                    elif a == 'anchorTop':
+                        ay = 1
+                    elif a == 'sca':
+                        showContentSize = True
+                    elif a == 'anchorMid':
+                        ax = 0.5
+                        ay = 0.5
+
+
+
+                px = px+ax*i.width
+                py = py+ay*i.height
+                pxStr = '%d' % (px)
+                pyStr = '%d' % (py)
+                if floatX == 'right':
+                    pxStr = 'vs.width-%d' % (SCREEN_WIDTH-px)
+                elif floatX == 'midX':
+                    pxStr = '%d+vs.width/2' % (px-SCREEN_WIDTH/2)
+                if floatY == 'up':
+                    pyStr = 'vs.height-%d' % (SCREEN_HEIGHT-py)
+                elif floatY == 'midY':
+                    pyStr = '%d+vs.height/2' % (py-SCREEN_HEIGHT/2)
+                if kind == 'Sprite':
+                    print 'temp = CCSprite:create("%s.png")' % (name)
+                    print 'temp:setPosition(ccp(%s, %s))' % (pxStr, pyStr)
+                    print 'temp:setAnchorPoint(ccp(%.2f, %.2f))' % (ax, ay)
+                    if showContentSize:
+                        print 'temp:setContentSize(CCSizeMake(%d, %d))' % (i.width, i.height)
+                    print 'self.bg:addChild(temp)'
+
+                elif kind == 'Label':
+                    #if word == "":
+                    #    word = name
+                    dimensions = "CCSizeMake(%d, %d)"
+                    if limitWidth:
+                        dimensions = dimensions % (i.width, 0)
+                    else:
+                        dimensions = dimensions % (0, 0)
+
+                    print 'temp = CCLabelTTF:create("%s", "", %d, %s, kCCTextAlignmentLeft, kCCVerticalTextAlignmentBottom)' % (name, labelHeight, dimensions)
+                    print 'temp:setAnchorPoint(ccp(%.2f, %.2f))' % (ax, ay)
+                    print 'temp:setPosition(ccp(%s, %s))' % (pxStr, pyStr)
+                    print 'self.bg:addChild(temp)'
+
+                elif kind == 'Button':
+                    #allMenu.append(name)
+                    print 'temp = ui.newButton({image="%s.png", delegate=self, callback=self.on%s})' % (name, name.capitalize())
+                    #print 'temp = CCMenuItemImage:create("%s.png", "%s.png")' % (name, name+"On")
+                    print 'temp.bg:setPosition(ccp(%s, %s))' % (pxStr, pyStr)
+                    print 'self.bg:addChild(temp.bg)'
+                    print 'temp:setAnchor(%.2f, %.2f)' % (ax, ay)
+                    """
+                    print 'local %s = temp' % (name)
+                    
+                    if word != "": 
+                        print 'local label = CCLabelTTF:create("%s", "", %d, %s, kCCTextAlignmentCenter, kCCVerticalTextAlignmentCenter)' % (word, labelHeight, "CCSizeMake(0, 0)")
+                        print 'label:setAnchorPoint(ccp(0.5, 0.5))'
+                        print 'label:setPosition(ccp(%d, %d))' % (i.width/2, i.height/2)
+                        print 'temp:addChild(label)'
+
+
+                    print 'local function on%s()' % (name.capitalize())
+                    print 'end'
+                    print '%s:registerScriptTapHandler(on%s)' % (name, name.capitalize())
+                    """
+                elif kind == 'Input':
+                    print """local listener = {}
+                    function listener:onEditBoxBegan(object)
+                    end
+                    function listener:onEditBoxEnded(object)
+                    end
+                    function listener:onEditBoxReturn(object)
+                    end
+                    function listener:onEditBoxChanged(object)
+                    end
+                    """
+                    print """temp = ui.newEditBox({
+                        image="%s.png",
+                        imagePressed="%s.png",
+                        imageDisabled="%s.png",
+                        listener=listener, listenerType="table",
+                        size=CCSizeMake(%d, %d)
+                    })
+                    """ % (name, name, name, i.width, i.height)
+                    print "temp:setPosition(ccp(%s, %s))" % (pxStr, pyStr)
+                    print "temp:setFontSize(%d)" % (labelHeight)
+                    print "temp:setFontColor(ccc3(%d, %d, %d))" % (color[0], color[1], color[2])
+                    print 'temp:setReturnType(kKeyboardReturnTypeDone)'
+                    print 'temp:setTouchPriority(kCCMenuHandlerPriority)'
+                    print 'self.bg:addChild(temp)'
+                if export:
+                    print 'self.%s = temp' % (name)
+                    
+
+class myBuffer:
+    def __init__(self):
+        self.res = ''
+    def write(self, data):
+        self.res += data
+import sys
+def genFloatUICode(p, back, pdb):
+    oldStd = sys.stdout
+    temp = myBuffer()
+    sys.stdout = temp
+    b = findL(p.layers, back)
+    l = list(p.layers)
+    l.reverse()
+    print 'self.bg = CCLayer:create()'
+    print 'local temp'
+    print 'local menu'
+    print 'local vs = CCDirector:sharedDirector():getVisibleSize()'
+    allMenu = []
+    genFloatLayerCode(l, b, allMenu, p.width, p.height, {})
+    if len(allMenu) > 0:
+        print 'menu = CCMenu:create()'
+        print 'menu:setPosition(ccp(0, 0))'
+        print 'self.bg:addChild(menu)'
+        for k in allMenu:
+            print 'menu:addChild(%s)' % (k)
+    sys.stdout = oldStd
+    res = ''
+    for l in temp.res.split('\n'):
+        res += '\t'+l+'\n'
+    print res
+
+import math
+def genLC(l, sz, coords=[]):
+    nl = list(l.layers)
+    anchor = [0.5, 0.5]
+    for i in nl:
+        if i.visible:
+            if hasattr(i, 'layers'):
+                genLC(i, sz, coords)
+            else:
+                allN = i.name.split('#')
+                realId = -1
+                for k in allN:
+                    if k[:2] == 'id':
+                        realId = int(k[2:])
+                mx, my = i.offsets[0], i.offsets[1]
+                mx += i.width*anchor[0]
+                my += i.height*(1-anchor[1])
+                coords.append([math.floor(mx), math.floor(sz[1]-my), realId])
+    
+def genCoord(p, pdb):
+    sz = [p.width, p.height]
+    coords = []
+    genLC(p, sz, coords)
+    '''
+    l = list(p.layers)
+    anchor = [0.5, 0.5]
+    for i in l:
+        if i.visible:
+            mx, my = i.offsets[0], i.offsets[1]
+            mx += i.width*anchor[0]
+            my += i.height*(1-anchor[1])
+            coords.append([mx, sz[1]-my])
+    '''
+    #print coords
+    print 'MapCoord = '+str(coords).replace('[', '{').replace(']', '}')
+
+def genLCode(p, pdb, im, back, curPic, ret):
+    l = list(p.layers)
+    l.reverse()
+    px = 0
+    py = 0
+    if back != None and hasattr(back, 'offsets'):
+        px = back.offsets[0]
+        py = back.offsets[1]
+
+    for i in l:
+        if i.visible:
+            if hasattr(i, 'layers'):
+                genLCode(i, pdb, im, back, curPic, ret)
+            else:
+                an = i.name.split('#')
+                name = an[0].replace(' ', '')
+                kind = 'sprite'
+                anchor = [0.5, 0.5]
+                wsize = 18
+                color = [255, 255, 255]
+                font = 'f1'
+                word = ''
+                center = False
+                nosize = False
+                heiCenter = False
+                shadowColor = [0, 0, 0]
+                for k in an[1:]:
+                    k = k.replace(' ', '')
+                    if len(k) == 0:
+                        continue
+                    #print k
+                    if k == 'l':
+                        kind = 'label'
+                        anchor = [0, 0.5]
+                    elif k == 'p':
+                        kind = 'progress'
+                    elif k == 'b':
+                        kind = 'button'
+                    elif k == 'bottom':
+                        anchor[1] = 0
+                    elif k == 'left':
+                        anchor[0] = 0
+                    elif k == 'mid':
+                        anchor = [0.5, 0.5]
+                    elif k[0] == 'z':
+                        wsize = int(k[1:])
+                    elif k == 'right':
+                        anchor[0] = 1
+                    elif k[0] == 'r' and k.find('right') == -1:
+                        r = int(k[1:3], base=16)
+                        g = int(k[3:5], base=16)
+                        b = int(k[5:7], base=16)
+                        color = [r, g, b]
+                        #print 'color', k, r, g, b
+                    elif k[0] == 'f':
+                        font = k
+                    elif k[0] == 'w':
+                        word = k[1:]
+                    elif k == 'center':
+                        center = True
+                    elif k == 'top':
+                        anchor[1] = 1
+                    elif k == 'nosize':
+                        nosize = True
+                    elif k == 'heiCenter':
+                        heiCenter = True
+                    elif k == 'mx':
+                        anchor[0] = 0.5
+                    elif k[0] == 't':
+                        r = int(k[1:3], base=16)
+                        g = int(k[3:5], base=16)
+                        b = int(k[5:7], base=16)
+                        shadowColor = [r, g, b]
+
+                textis = pdb.gimp_item_is_text_layer(i)
+                if textis == 1:
+                    kind = 'label'
+                    wsize, unit = pdb.gimp_text_layer_get_font_size(i)
+                    color = pdb.gimp_text_layer_get_color(i)
+                    color = [color.r, color.g, color.b]
+
+
+                if kind == 'sprite':
+                    if ret.get('isList', False):
+                        anchor[0] = 0
+                        anchor[1] = 0
+                    mx, my = i.offsets[0], i.offsets[1]
+                    mx += i.width*anchor[0]
+                    my += i.height*(1-anchor[1])
+
+                    if not ret.get('scroll', False):
+                        mx -= px
+                        my -= py
+
+                    #左右居中    
+                    if center:
+                        #mx = im.width/2
+                        anchor[0] = 0.5
+                        ret['center'] = mx
+
+                    if ret.get('isList', False) or ret.get('scroll', False):
+                        ret['panels'].append([mx, my, curPic.get(name, name), anchor[0], anchor[1], i.width, i.height])
+
+                    if nosize:
+                        print 'local sp = setAnchor(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%.2f, %.2f})' % (curPic.get(name, name), mx, my, anchor[0], anchor[1])
+                    else:
+                        print 'local sp = setAnchor(setSize(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%d, %d}), {%.2f, %.2f})' % (curPic.get(name, name), mx, my, i.width, i.height, anchor[0], anchor[1])
+                    if heiCenter:
+                        ret['heiCenter'] = my
+                elif kind == 'label':
+                    if center:
+                        anchor[0] = 0.5
+                    mx, my = i.offsets[0], i.offsets[1]
+                    mx += i.width*anchor[0]
+                    my += i.height*(1-anchor[1])
+                    mx -= px
+                    my -= py
+                    if center:
+                        #mx = im.width/2
+                        anchor[0] = 0.5
+                        ret['center'] = mx
+                    #裁剪label
+                    #不能裁剪文字
+                    #pdb.plug_in_autocrop_layer(im, i)
+                    print 'local w = setPos(setAnchor(addChild(self.temp, ui.newTTFLabel({text="%s", size=%d, color={%d, %d, %d}, font="%s", shadowColor={%d, %d, %d}})), {%.2f, %.2f}), {%d, fixY(sz.height, %d)})' % (name, wsize, color[0], color[1], color[2], font, shadowColor[0], shadowColor[1], shadowColor[2], anchor[0], anchor[1], mx, my)
+                elif kind == 'progress':
+                    print 'local banner = setSize(CCSprite:create("probg.png"), {%d, %d})' % (i.width, i.height)
+                    print 'local pro = display.newScale9Sprite("pro.png")'
+                    print 'banner:addChild(pro)'
+                    print 'setAnchor(setPos(pro, {27, fixY(76, 40)}), {0, 0.5})'
+                    print 'setPos(banner, {%d, fixY(sz.height, %d)})' % (i.offsets[0]-px+i.width/2, i.offsets[1]-py+i.height/2)
+                    print 'addChild(self.temp, banner)'
+                elif kind == 'button':
+                    print 'local but = ui.newButton({image="%s.png", text="%s", font="%s", size=%d, delegate=self, callback=self.onBut, shadowColor={%d, %d, %d}, color={%d, %d, %d}})' % (curPic.get(name, name), word, font, wsize, shadowColor[0], shadowColor[1], shadowColor[2], color[0], color[1], color[2])
+                    print 'but:setContentSize(%d, %d)' % (i.width, i.height)
+                    print 'setPos(addChild(self.temp, but.bg), {%d, fixY(sz.height, %d)})' % (i.offsets[0]-px+i.width/2, i.offsets[1]-py+i.height/2)
+
+def genGroupCode(p, group, pdb):
+    l = findL(p.layers, group)
+    ret = {}
+    allAtt = l.name.split('#')
+    #scroll 滚动条
+    #isList 列表项
+    for k in allAtt[1:]:
+        if k == 'list':
+            ret['isList'] = True
+        elif k == 'scroll':
+            ret['scroll'] = True
+        elif k == 'panel':
+            ret['panel'] = True
+    ret['panels'] = []
+
+    genLuaCode(p, l, pdb, ret)
+
+    if ret.get('scroll', False):
+        zero = back = ret['panels'][0]
+        print ''
+        print 'local sp = setAnchor(setSize(setPos(addSprite(self.temp, "%s.png"), {%d, fixY(sz.height, %d)}), {%d, %d}), {%.2f, %.2f})' % (back[2], back[0], back[1], back[5], back[6], back[3], back[4])
+        back = ret['panels'][1]
+        print 'local pro = setAnchor(setSize(setPos(addSprite(sp, "%s.png"), {0, fixY(%d, 0)}), {%d, %d}), {0, 1})' % (back[2], 315, back[5], back[6])
+        print 'self.scrollPro = pro'
+        print 'local total = #self.data'
+        print 'local sz = getContentSize(self.scrollPro)'
+        print 'self.scrollHeight = math.max(math.min(6/total*%d, %d), 10)' % (315, 315)
+        print 'self.scrollBackHei = %d' % (315)
+        print 'sy = self.scrollHeight/(sz[2]-4)'
+        print 'setScaleY(self.scrollPro, sy)'
+
+
+
+    if ret.get('isList', False):
+        print ''
+        print 'local listSize = {width=%d, height=%d}' % (l.width, l.height)
+        print 'self.listSize = listSize'
+        print 'self.HEIGHT = %d'%(l.height)
+        print 'self.cl = Scissor:create()'
+        print 'self.temp:addChild(self.cl)'
+        print 'setPos(self.cl, {%d, fixY(sz.height, %d+listSize.height)})' % (l.offsets[0], l.offsets[1])
+        print 'setContentSize(self.cl, {listSize.width, listSize.height})'
+        print 'self.flowNode = addNode(self.cl)'
+        print 'setPos(self.flowNode, {0, self.HEIGHT})'
+
+        print 'self.touch = ui.newTouchLayer({size={listSize.width, self.HEIGHT}, delegate=self, touchBegan=self.touchBegan, touchMoved=self.touchMoved, touchEnded=self.touchEnded})'
+        print 'self.cl:addChild(self.touch.bg)'
+        print 'setPos(self.touch.bg, {0, 0})'
+
+        print 'self.flowHeight = 0'
+        print 'self:updateTab()'
+
+        print ''
+        print 'function updateTab()'
+        ret['panels'].reverse()
+        pan = ret['panels']
+        print '\tlocal initX = %d' % (pan[0][0])
+        print '\tlocal initY = %d' % (-pan[0][1])
+        print '\tlocal offX = 0'
+
+
+def genLuaCode(p, back, pdb, ret={}):
+    px = 0
+    py = 0
+    sz = [p.width, p.height]
+    if back == None:
+        back = p
+        #l = list(p.layers)
+    else:
+        px = back.offsets[0]
+        py = back.offsets[1]
+        sz = [back.width, back.height]
+        pass
+        #l = list(back.layers)
+    old_std = sys.stdout
+    sys.stdout = mystd = StringIO()
+    #l.reverse()
+    print 'local vs = getVS()'
+    print 'self.bg = CCNode:create()'
+    print 'local sz = {width=%d, height=%d}' % (sz[0], sz[1])
+    oldX = px
+    print 'self.temp = setPos(addNode(self.bg), {[OLD_X], fixY(sz.height, %d+sz.height)+[HEI_Y]})' % (py)
+    '''
+    print 'local temp = display.newScale9Sprite("tabback.jpg")'
+    print 'temp:setContentSize(CCSizeMake(%d, %d))' % (l[0].width, l[0].height)
+    print 'setPos(temp, {vs.width/2, vs.height/2})'
+    print 'addChild(self.bg, temp)'
+    print 'self.temp = temp'
+    print 'local sz = self.temp:getContentSize()'
+    '''
+
+    con = MySQLdb.connect(host='192.168.3.120', user='root', passwd='badperson3', db='miamiao', charset='utf8')
+    sql = 'select cnName, engName from picName'
+    con.query(sql)
+    res = con.store_result().fetch_row(0, 1)#rowNum Dict
+    curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
     con.close()
 
+    genLCode(back, pdb, p, back, curPic, ret)
+    strValue = mystd.getvalue()
+    if ret.get('center', None) != None:
+        strValue = strValue.replace('[OLD_X]', str(-ret['center']+p.width/2))
+    else:
+        strValue = strValue.replace('[OLD_X]', str(oldX))
+    if ret.get('heiCenter', None) != None:
+        strValue = strValue.replace('[HEI_Y]', str(ret['heiCenter']-p.height/2))
+    else:
+        strValue = strValue.replace('[HEI_Y]', str(0))
+        
+    if ret.get('panel', False):
+        import re
+        pat = re.compile('panel = .*\n')
+        
+        '''
+        np = re.compile('local sp = .*list.*\n')
+        repList = np.findall(strValue)
+        nstr = repList[0].replace('sp', 'listback')
+        strValue = strValue.replace(repList[0], nstr)
+        '''
+
+        strValue = strValue.replace('self.temp', 'panel')
+        needReplace = pat.findall(strValue)
+        strValue = strValue.replace(needReplace[0], 'local panel = setPos(addNode(self.flowNode), {initX+col*offX, initY-offY*row})\n')
+        strValue += 'panel:setTag(k)\n'
+        strValue += 'setContentSize(panel, {sz.width, sz.height})\n'
+    sys.stdout = old_std
+    print strValue
 
    
 #生成unity3d NGUI 的代码
@@ -936,34 +1231,6 @@ def genNGUICode(p, back, name, atlas=None):
     newF.close()
 
             
-#生成Android 800 * 480 的代码
-def genImCode(p, back, pdb=None):
-    con = MySQLdb.connect(host='localhost', user='root', passwd='badperson3', db='Wan2', charset='utf8')
-    sql = 'select chinese, english from allpictures'
-    con.query(sql)
-    res = con.store_result().fetch_row(0, 1)#rowNum Dict
-    curPic = dict([[i['chinese'].encode('utf8'), i['english'].encode('utf8')] for i in res])
-    
-
-    sql = "select * from Strings"
-    con.query(sql)
-    res = con.store_result().fetch_row(0, 1)#rowNum Dict
-    strings = {}
-    for i in res:
-        strings[i['chinese'].encode('utf8')] = i['key']
-
-
-    b = findL(p.layers, back)
-    l = list(p.layers)
-    l.reverse()
-    print 'bg = node();'
-    print 'init();'
-    print 'var but0;'
-    print 'var line;'
-    print 'var temp;'
-    print 'var sca;'
-    genLayerCode(l, b, curPic, pdb, strings)
-    con.close()
 
 def getAllRel(l):
     last = l[-1]
@@ -1008,14 +1275,6 @@ def getAllVisible(l):
             print i.name, i.offsets, i.width, i.height
     return res
 
-def genCode(l):
-    v = getAllVisible(l)
-    v.reverse()
-    print 'bg = node();'
-    print 'init();'
-    for i in v:
-        print 'bg.addsprite("%s").pos(%d, %d).size(%d, %d)' % (i.name+".png", i.offsets[0], i.offsets[1], i.width, i.height)
-            
 
 def getColor(r, g, b):
     print r*100/255, g*100/255, b*100/255
@@ -1064,7 +1323,7 @@ def saveSamePosAndSizeWithImage(pdb, l):
         n = n[:-1]
     print 'saveAni', n, oldIm.width, oldIm.height, layer.width, layer.height
     
-    pdb.gimp_file_save(image, layer, os.environ['HOME']+"/temp/animation/"+n+".png", "")
+    pdb.gimp_file_save(image, layer, "G:\\gimpOutput\\"+n+".png", "")
     #pdb.file_png_save(image, image.layers[0], os.environ['HOME']+"/temp/animation/"+n+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
     pdb.gimp_image_delete(image)
 
@@ -1283,12 +1542,8 @@ def exportBuild(pdb, im, pid):
                 
                 
 
-            
-    
-
-
 #中文图片存储到temp
-def saveLayer(pdb, l, curPic):
+def saveLayer(pdb, l, curPic, con=None):
     non_empty = pdb.gimp_edit_copy(l)
     image = pdb.gimp_edit_paste_as_new()
     n = l.name.split('#')[0]
@@ -1298,6 +1553,9 @@ def saveLayer(pdb, l, curPic):
     newName = curPic.get(n, n)
     pdb.file_png_save(image, image.layers[0], "G:\\gimpOutput\\"+newName+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
     pdb.gimp_image_delete(image)
+    if con != None:
+        sql = 'insert ignore into picName (cnName) values( "%s")' % (newName)
+        con.query(sql)
 #不切割图片
 def checkAniSave(pdb, im):
     ret = [] 
@@ -1345,23 +1603,136 @@ def checkSaveInAni(pdb, im):
                 ret.append(i.name)
     return ret
 
+def saveFont(pdb, l):
+    non_empty = pdb.gimp_edit_copy(l)
+    oldIm = l.image
+    image = pdb.gimp_image_new(oldIm.width, oldIm.height, 0)
+    layer = pdb.gimp_layer_new(image, image.width, image.height, 1, "test", 100, 0)
+    pdb.gimp_image_add_layer(image, layer, 0)
+
+    layer_copy = pdb.gimp_layer_new_from_drawable(l, image)
+    pdb.gimp_image_add_layer(image, layer_copy, 0)
+
+    layer = pdb.gimp_image_merge_visible_layers(image, 1)
+
+    #n = l.name.split('#')[0]
+    #if n[-1] == ' ':#去除名字末尾空格
+    #    n = n[:-1]
+
+    if len(l.name) > 3:
+        realName = l.name[:-3]
+    else:
+        realName = l.name
+    n = ord(realName.decode('utf8'))
+    print 'saveNormal', n
+    newName = str(n)
+    print 'saveAni', n, oldIm.width, oldIm.height, layer.width, layer.height
+    
+    pdb.gimp_file_save(image, layer, "G:\\gimpOutput\\"+newName+".png", "")
+    #pdb.file_png_save(image, image.layers[0], os.environ['HOME']+"/temp/animation/"+n+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
+    pdb.gimp_image_delete(image)
+
+"""
+def saveFont(pdb, l, curPic, backIm):
+    non_empty = pdb.gimp_edit_copy(l)
+    #oldIm = l.image
+    image = pdb.gimp_image_new(backIm.width, backIm.height, 0)
+    #transparent layer
+    layer = pdb.gimp_layer_new(image, backIm.width, backIm.height, 1, "test", 100, 0)
+    pdb.gimp_image_add_layer(image, layer, 0)
+
+    #newlayer
+    layer_copy = pdb.gimp_layer_new_from_drawable(l, image)
+    pdb.gimp_image_add_layer(image, layer_copy, 0)
+    soff = layer_copy.offsets
+    print type(backIm)
+    print backIm.name, l.name
+    if str(type(backIm)) == "<type 'gimp.Image'>":
+        boff = (0, 0)
+    else:
+        boff = backIm.offsets
+    #pdb.gimp_layer_set_offsets(layer, soff[0]-boff[0], soff[1]-boff[1])
+
+    layer = pdb.gimp_image_merge_visible_layers(image, 1)
+
+
+    #n = l.name.split('#')[0]
+    #if n[-1] == ' ':#去除名字末尾空格
+    #    n = n[:-1]
+    print 'saveAni', backIm.width, backIm.height, layer.width, layer.height
+
+    if len(l.name) > 3:
+        realName = l.name[:-3]
+    else:
+        realName = l.name
+    n = ord(realName.decode('utf8'))
+    print 'saveNormal', n
+    newName = str(n)
+
+    #pdb.file_png_save(image, image.layers[0], "G:\\gimpOutput\\"+newName+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
+    #pdb.gimp_image_delete(image)
+
+    pdb.gimp_file_save(image, layer, "G:\\gimpOutput\\"+newName+".png", "")
+    pdb.gimp_image_delete(image)
+"""
+
+"""
+def saveFont(pdb, l, curPic, width, height):
+    non_empty = pdb.gimp_edit_copy(l)
+    image = pdb.gimp_edit_paste_as_new()
+    #n = l.name.split('#')[0]
+    #if n[-1] == ' ':#去除名字末尾空格
+    #    n = n[:-1]
+    realName = l.name[:-3]
+    n = ord(realName.decode('utf8'))
+    print 'saveNormal', n
+    newName = str(n)
+    pdb.file_png_save(image, image.layers[0], "G:\\gimpOutput\\"+newName+".png", "nn", 0, 9, 0, 0, 0, 0, 0)
+    pdb.gimp_image_delete(image)
+"""
+    
+def checkAllFont(pdb, im):
+    curPic = {}
+
+    ret = [] 
+    width = im.width
+    height = im.height
+    for i in im.layers:
+        if i.visible:
+            if hasattr(i, 'layers'):
+                ret += checkAllFont(pdb, i)
+            else:
+                #iName = i.name.replace('＃', '#')
+                #attris = iName.split('#')   
+                #name = attris[0]
+                name = i.name
+                #if name[-1] == ' ':
+                #    name = name[:-1]
+
+                saveFont(pdb, i)
+                ret.append(i.name)
+    return ret
+
 #存储所有可见图层
 #使用英文名称 转化图片名称
 #NGUI 使用
-def checkAllSave(pdb, im):
-    con = MySQLdb.connect(host='localhost', user='root', passwd='badperson3', db='uiname', charset='utf8')
-    sql = 'select cnName, engName from picname'
-    con.query(sql)
-    res = con.store_result().fetch_row(0, 1)#rowNum Dict
 
-    curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
-    con.close()
+def checkAllSave(pdb, im, maxSz=[0, 0]):
+    con = MySQLdb.connect(host='192.168.3.120', user='root', passwd='badperson3', db='miamiao', charset='utf8')
+    #sql = 'select cnName, engName from picname'
+    #con.query(sql)
+    #res = con.store_result().fetch_row(0, 1)#rowNum Dict
+
+    #curPic = dict([[i['cnName'].encode('utf8'), i['engName'].encode('utf8')] for i in res])
+    #con.close()
+    curPic = {}
 
     ret = [] 
     for i in im.layers:
         if i.visible:
             if hasattr(i, 'layers'):
-                ret += checkAllSave(pdb, i)
+                ret += checkAllSave(pdb, i, maxSz)
+
             else:
                 iName = i.name.replace('＃', '#')
                 attris = iName.split('#')   
@@ -1369,8 +1740,16 @@ def checkAllSave(pdb, im):
                 if name[-1] == ' ':
                     name = name[:-1]
 
-                saveLayer(pdb, i, curPic)
+                saveLayer(pdb, i, curPic, con)
                 ret.append(i.name)
+                if i.width > maxSz[0]:
+                    maxSz[0] = i.width
+                if i.height > maxSz[1]:
+                    maxSz[1] = i.height
+    print "max", maxSz
+
+    con.commit()
+    con.close()
     return ret
             
 #存储#n属性的图层
@@ -1406,12 +1785,12 @@ def checkNSave(pdb, im):
                 #        i.jpg = True
                 #        break
 
-                if save:
+                #if save:
                     #print 'saveNow', name, saveAni
-                    if saveAni:
-                        saveSamePosAndSizeWithImage(pdb, i)
-                    else:
-                        saveLayer(pdb, i)
+                if saveAni:
+                    saveSamePosAndSizeWithImage(pdb, i)
+                else:
+                    saveLayer(pdb, i)
                 
     return ret
 
@@ -1620,7 +1999,7 @@ def adjustMovePic(pdb, p):
 
 """
 #cut 是否自动切割每个cut 图层使其大小最小 第一次用的时候需要
-def cutPointAndGetPos(im, back, pdb, buildId, cut=True):
+def cutPointAndGetPos(im, back, pdb, buildId, pid, cut=True):
     num = 0
     b = findL(im.layers, back)
     pos = []
@@ -1659,7 +2038,7 @@ def cutPointAndGetPos(im, back, pdb, buildId, cut=True):
     ret += "}\n"
     ret += 'return {buildId = buildId, width=width, height=height, pic=pic}\n'
 
-    f = open('G:\\hope\\out.lua', 'w')
+    f = open('G:\\hope\\pack%d.lua' % (pid), 'w')
     f.write(ret)
     f.close()
 
@@ -1671,6 +2050,42 @@ def cutPointAndGetPos(im, back, pdb, buildId, cut=True):
         pdb.file_png_save(image, image.layers[0], "G:\\hope\\%d.png" % (num), "nn", 0, 9, 0, 0, 0, 0, 0)
         pdb.gimp_image_delete(image)
         num += 1
+
+def allSoldier(pdb):
+    cur = "C:\\Users\\Administrator\\Desktop\\tileset\\soldier\\"
+    f = os.listdir(cur)
+    for i in f:
+        w = os.path.join(cur, i)
+        print w
+        im = pdb.gimp_file_load(cur+i, "")
+        changeColorAlpha(pdb, im, i)
+        pdb.gimp_image_delete(im)
+
+
+
+
+def changeColorAlpha(pdb, im, name):
+    l = im.layers[0]
+    color = l.get_pixel(0, 0)
+    threshold = 0
+    operation = 2
+    antialias = True
+    feather = False
+    feather_radius = 0
+    sample_merged = False
+    pdb.gimp_by_color_select(l, color, threshold, operation, antialias, feather, feather_radius, sample_merged)
+    pdb.gimp_layer_add_alpha(l)
+    pdb.gimp_context_set_background((0, 0, 0, 0))
+    pdb.gimp_edit_clear(l)
+    nf = "C:\\Users\\Administrator\\Desktop\\tileset\\newSoldier\\"
+    o = name.replace('bmp', 'png')
+    o = o.replace(' ', '-')
+    nf = os.path.join(nf, o)
+    print nf
+    pdb.gimp_file_save(im, l, nf, "")
+
+
+
 
 
             
